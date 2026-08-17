@@ -217,12 +217,16 @@
 
 证据：
 
-- 文件位置：
-- 关键变量或条件：
+- 文件位置：`packages/agent/src/agent-loop.ts`-`runloop()`
+- 关键变量或条件：`currentContext，firstTurn，pendingMessages，hasMoreToolCalls，message，toolCalls，toolResults`
 
 我的事实描述：
 
-> 待填写。
+> 1. 循环实现在`runloop()`中，外循环作用：用户在当前会话中是否追加了message，如果有就要接着进入循环处理，直到没有新消息；内循环则是具体的agent层面的loop，完成用户输入的message需要经过llm的多轮对话事件，包括工具调用、下一轮对话的输入、追加的用户对话等等，并且始终用`emit`将内层loop的对话显示出来
+> 2. 外层循环负责处理用户是否有在一起会话完成处理前追加输入的情况
+> 3. 内层循环负责处理用户输入信息、工具调用、LLM的信息流，实现和LLM的多轮对话
+> 4. 影响`turn start`，标志一个turn生命周期的开始，turn是一个LLM的回复+工具调用/工具调用结果
+> 5. 来自用户在当前会话还未结束就输入的
 
 ### 5.4 一次模型调用
 
@@ -234,7 +238,11 @@
 
 证据与答案：
 
-> 待填写。
+> 	1. `streamAssistantResponse`
+> 	2. `currentContext, config, signal, emit, streamFunction`：当前的上下文，agent配置，信号，agent事件，流函数（可能不对，需要纠正）
+> 	3. 是一个信息流
+> 	4. 在LLM消息流结束后也就是`streamAssistantResponse`返回`finalMessage`后
+> 	5. 在消息流的开始时就加入`let messages = context.messages;` `context`是作为传参传入`streamAssistantResponse()`函数的
 
 ### 5.5 Tool call 的发现
 
@@ -246,15 +254,29 @@
 记录关键表达式，不复制大段源码：
 
 ```ts
-// 待填写
+// 1. tool call从message中提取，message是LLM的回复，也就是LLM会提出需要tool调用
+const toolCalls = message.content.filter((c) => c.type === "toolCall");
+
+// 2. 提取消息中的type，type中为toolCall的，代码证据同问题1
+
+// 3. 是一个const，只能赋值一次，元素类型应该说的是toolCall？
+
+// 4. 可以包含， 证据如下（存在并行调用的工具）：
+executeToolCalls(){
+return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+}
 ```
 
 ### 5.6 Tool 的执行与结果写回
 
 1. 哪个函数接收并执行 tool calls？
+	`executeToolCalls()`
 2. 哪种 `stopReason` 会阻止正常执行工具？为什么？
+	`length`，消息超长了
 3. 执行结果包含哪两个对循环控制最重要的字段？
+	`hasMoreToolCalls`, `toolResults`
 4. tool result 在哪里加入 `currentContext.messages`？
+	
 5. tool result 在哪里加入 `newMessages`？
 6. 为什么两个数组都需要加入？
 7. 下一轮模型调用为什么能够看到这些 tool results？
