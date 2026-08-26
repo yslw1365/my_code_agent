@@ -222,10 +222,10 @@
 
 我的事实描述：
 
-> 1. 循环实现在`runloop()`中，外循环作用：用户在当前会话中是否追加了message，如果有就要接着进入循环处理，直到没有新消息；内循环则是具体的agent层面的loop，完成用户输入的message需要经过llm的多轮对话事件，包括工具调用、下一轮对话的输入、追加的用户对话等等，并且始终用`emit`将内层loop的对话显示出来
-> 2. 外层循环负责处理用户是否有在一起会话完成处理前追加输入的情况
+> 1. 循环实现在`runLoop()`中，外循环作用：用户在当前会话中是否追加了message，如果有就要接着进入循环处理，直到没有新消息；内循环则是具体的agent层面的loop，完成用户输入的message需要经过llm的多轮对话事件，包括工具调用、下一轮对话的输入、追加的用户对话等等；
+> 2. 外层循环负责Inner Loop结束后，**检查是否有消息来自配置回调**，即`followUpMessages`；`getFollowUpMessages`：Agent 原本将结束时才查询；`getSteeringMessages`：Agent 尚在运行时注入到下一轮；初始 `prompts`：由启动入口加入。
 > 3. 内层循环负责处理用户输入信息、工具调用、LLM的信息流，实现和LLM的多轮对话
-> 4. 影响`turn start`，标志一个turn生命周期的开始，turn是一个LLM的回复+工具调用/工具调用结果
+> 4. 影响`turn start`，标志一个turn生命周期的开始，turn是一个LLM的回复+工具调用/工具调用结果（**修正回答**：`turn start`早在`runAgentLoop`就已经开始了，所以`firstTurn`不是每次进入 Inner Loop 都重新标记第一轮；它在整个 `runLoop` 期间只会从 `true` 变为 `false` 一次，目的是避免重复发出第一轮）
 > 5. 来自用户在当前会话还未结束就输入的
 
 ### 5.4 一次模型调用
@@ -239,10 +239,23 @@
 证据与答案：
 
 > 	1. `streamAssistantResponse`
-> 	2. `currentContext, config, signal, emit, streamFunction`：当前的上下文，agent配置，信号，agent事件，流函数（可能不对，需要纠正）
+> 	2. `currentContext, config, signal, emit, streamFunction`：当前的上下文，agent配置，信号，agent事件，`streamFunction`（输入调用模型、上下文、可选的选项，输出一个LLM事件流）
 > 	3. 是一个信息流
+> 		**修正答案**：
+> 			streamFunction(...) 的返回对象：LLM的信息流
+> 			for await 循环中处理的 event：LLM的response中的各种事件
+> 			streamAssistantResponse(...) 最终 return 的值：一个`AssistantMessage`类型的`finalMessage`
 > 	4. 在LLM消息流结束后也就是`streamAssistantResponse`返回`finalMessage`后
 > 	5. 在消息流的开始时就加入`let messages = context.messages;` `context`是作为传参传入`streamAssistantResponse()`函数的
+> 		**修正回答**：
+> 			assistant message 是在流的什么事件时首次加入 context？ 
+> 				在类型为`start`的事件中加入 
+> 			流结束时是“追加”最终消息，还是“替换”已有 partial message？ 
+> 				如果流中收到了 `start` 事件，代码先加入 partial message，结束时再替换为 final message；如果没有收到 `start` 事件，则结束时直接追加 final message。（代码并没有把“有无 partial message”定义为“正常/异常”）
+> 			不存在 partial message 时走哪条分支？
+> 				追加push
+>
+
 
 ### 5.5 Tool call 的发现
 
@@ -259,79 +272,124 @@ const toolCalls = message.content.filter((c) => c.type === "toolCall");
 
 // 2. 提取消息中的type，type中为toolCall的，代码证据同问题1
 
-// 3. 是一个const，只能赋值一次，元素类型应该说的是toolCall？
+// 3. const是变量绑定方式，
+- `toolCalls` 的推导类型是什么？
+  一个“Tool Call 元素组成的数组”的具体 TypeScript 类型；
+  相关代码：
+  toolCalls: AgentToolCall[], 
+  export type AgentToolCall = Extract<AssistantMessage["content"][number], { type: "toolCall" }>; // 索引访问类型，从AssistantMessage中取出content字段的类型，再加上number，就变成这个数组中一个元素的类型；Extract<A, B>的意思是：从联合类型 A 中，提取可以赋值给 B 的成员。这样 `AgentToolCall` 和 `AssistantMessage` 的定义保持关联。`Extract` 是提取联合类型，不是继承类型！！！
+  
+- `message` 的类型是什么？
+  是AssistantMessage
+- `message.content` 的元素类型如何让 `filter(c => c.type === "toolCall")` 缩小类型？
+  content是包含了三种类型：TextContent | ThinkingContent | ToolCall的数组，toolcall是其中一种，c是content其中的一个元素，type符合toolCall的就被筛选出来了
 
 // 4. 可以包含， 证据如下（存在并行调用的工具）：
 executeToolCalls(){
 return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
 }
+
+更充分的证据
+- 为什么代码把结果命名为复数 `toolCalls`；
+  因为AssistantMessage的content定义是(TextContent | ThinkingContent | ToolCall)[]，这是一个数组，可以有很多个
+- 哪些地方遍历这个数组；
+  在executeToolCallsSequential和executeToolCallsParallel函数中，会用for循环遍历每一个toolcall
+- 并行或顺序函数各自如何处理数组中的每一项。
+  顺序一次循环中只完成一个工具的执行，并行是一次循环中完成所有的工具执行
 ```
 
 ### 5.6 Tool 的执行与结果写回
 
 1. 哪个函数接收并执行 tool calls？
 	`executeToolCalls()`
-2. 哪种 `stopReason` 会阻止正常执行工具？为什么？
+2. **哪种 `stopReason` 会阻止正常执行工具？为什么？**
 	`length`，消息超长了
-3. 执行结果包含哪两个对循环控制最重要的字段？
-	`hasMoreToolCalls`, `toolResults`
-4. tool result 在哪里加入 `currentContext.messages`？
-	
-5. tool result 在哪里加入 `newMessages`？
+	1. 为什么这个 `stopReason` 会使工具参数不可信？  
+		因为超过输出的token长度限制，导致工具调用的参数可能少了
+	2. Pi 在这种情况下是完全结束 Agent，还是生成某种工具结果后交还给模型？  
+		会生成说明是哪个toolcall，报错日志，错误标志（`isError`）
+	3. 请比较 `failToolCallsFromTruncatedMessage(...)` 的返回对象与正常执行的返回对象。
+		类型都是`ExecutedToolCallBatch`，从外到内，首先是`terminate`不同（失败执行返回false，正常执行返回true）；然后是message填充内容不同（失败执行显示报错日志，正常是正常执行日志）
+3. **执行结果包含哪两个对循环控制最重要的字段？**
+	`hasMoreToolCalls`, `toolResults`（这个完全不对）
+	执行返回的是`ExecutedToolCallBatch`（用`promise`保证必定是这个类型），`ExecutedToolCallBatch`返回的是`messages`（存ToolResult的数组，保存写回上下文消息）和`terminate`（是否中止的一个布尔值，影响后续循环），这两个值才是真正决定`hasMoreToolCalls`, `toolResults`的根源
+4. **tool result 在哪里加入 `currentContext.messages`？**
+	 在本轮工具调用完成成功后，LLM返回`toolResults`
+	 `currentContext.messages.push(result);`
+5. **tool result 在哪里加入 `newMessages`？**
+	 同5，一样，在加入`currentContext`后
+	 `newMessages.push(result);`
 6. 为什么两个数组都需要加入？
+	 `currentContext.messages`负责给下一轮`agent loop` 提供上下文，`newMessages`负责展示本轮新产生的消息，展示给用户看
 7. 下一轮模型调用为什么能够看到这些 tool results？
+	 因为加入了`currentContext.messages`，这个会作为传参给下一轮的`streamAssistantResponse`调用
 
 关键调用链：
 
 ```text
 assistant message
-→ 待填写
-→ 待填写
+→ toolCalls
+→ executeToolCalls
 → ToolResultMessage
-→ 待填写
+→ currentContext
 → 下一轮 LLM
 ```
 
 证据位置：
 
-> 待填写。
+> `runLoop`函数
 
 ### 5.7 继续条件
 
 为每个变量写出它的含义以及如何变化：
 
-| 变量或条件 | 初始值 | 在哪里更新 | 为真时发生什么 |
-|---|---|---|---|
-| `hasMoreToolCalls` |  |  |  |
-| `pendingMessages.length > 0` |  |  |  |
-| `followUpMessages.length > 0` |  |  |  |
+| 变量或条件                         | 初始值        | 在哪里更新                                                                                                                                                                                                         | 为真时发生什么           |
+| ----------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `hasMoreToolCalls`            | true       | 在tool执行前置为false，随后根据tool执行结果设置值                                                                                                                                                                               | 下一轮Inner Loop     |
+| `pendingMessages.length > 0`  | 0          | 1. Inner Loop开始前根据`SteeringMessages`初始化；<br>2. Inner Loop遍历所有的`pendingMessages`后置空；<br>3. Inner Loop中agent_end后再次检查`SteeringMessages`;<br>4. Inner Loop结束后，检查`followUpMessages`，如果存在，将它不断填入`pendingMessages`中 | 下一轮Inner Loop     |
+| `followUpMessages.length > 0` | 不适用/首次读取时机 | 一轮Inner Loop完成后                                                                                                                                                                                               | 更新pendingMessages |
 
 然后回答：
 
-1. “模型返回了 tool call”是否必然进入下一轮？
-2. 哪个执行结果可能要求 Agent 不再继续工具循环？
-3. 没有 tool call，但存在 steering message 时是否继续？
-4. 内层循环结束后，什么情况会让外层循环继续？
+1. “**模型返回了 tool call”是否必然进入下一轮？**
+	不是，是根据`hasMoreToolCalls`和`pendingMessages`的值来判断是否执行下一轮循环
+2. **哪个执行结果可能要求 Agent 不再继续工具循环？**
+	`failToolCallsFromTruncatedMessage`检查tool的入参是否超出token的最大长度限制；
+	正常工具执行调用的`shouldTerminateToolBatch`函数也会返回终止，当
+3. 没有 tool call，但存在 steering message 时是否继续（steering message 是何时被收集、何时进入 context）？
+	继续
+	补充：在Inner Loop结束之前，会检查是否存在`steering message `，具体代码如下，根据结果填充`pendingMessages`，该参数会判断是否进行下一次Inner Loop；在下一轮Inner Loop开始时，会将`pendingMessages`中的message进入context
+	`pendingMessages = (await config.getSteeringMessages?.()) || [];`
+4. 内层循环结束后，什么情况会让外层循环继续？（follow-up 又是何时令外层重新进入内层）
+	用户刚好又输入了信息，导致`followUpMessages.length > 0
+	补充：`followUpMessages`如果存在，会将其存到`pendingMessages`中，随后continue，因为`pendingMessages`有值了，会再次进入Inner Loop
 
-结论：
+补充问题：
+1. “不执行原始工具”与“不会再次调用模型”是否是同一件事？
+	不是，不执行原始工具是根据`failToolCallsFromTruncatedMessage`函数的返回结果来判断；不会再次调用模型是根据`hasMoreToolCalls`和`pendingMessages`的值来判断是否执行下一轮循环
+2. 截断处理函数返回的 `terminate` 值是什么？
+	False
+3. 正常工具批次的 `terminate` 来自哪个函数？
+	`shouldTerminateToolBatch`
+4. 那个函数是在什么条件下返回终止？
+	只要至少有一个已完成的工具调用，并且这些已完成调用的结果全部明确要求终止后续工具循环，就返回 `true`。`true`就是终止
 
-> 待填写。
 
 ### 5.8 终止条件
 
 找出每一条终止路径，并区分 `return` 与 `break`：
 
-| 终止原因 | 判断条件 | 结束哪层循环或函数 | 结束前发出什么事件 |
-|---|---|---|---|
-| 模型错误 |  |  |  |
-| 用户取消 |  |  |  |
-| 配置要求本轮后停止 |  |  |  |
-| 无更多工具或消息 |  |  |  |
-| 工具执行要求终止 |  |  |  |
+| 终止原因      | 判断条件                                                                                                                  | 结束哪层循环或函数        | 结束前发出什么事件          |
+| --------- | --------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------ |
+| 模型错误      | message.stopReason == error                                                                                           | return runLoop   | turn_end、agent_end |
+| 用户取消      | message.stopReason == aborted                                                                                         | return runLoop   | turn_end、agent_end |
+| 配置要求本轮后停止 | config.shouldStopAfterTurn返回true时（**此处没看懂怎么返回true**）                                                                  | return runLoop   | agent_end          |
+| 无更多工具或消息  | while (hasMoreToolCalls \|\| pendingMessages.length > 0)和<br>if (followUpMessages.length > 0)                         | break Outer Loop | agent_end          |
+| 工具执行要求终止  | failToolCallsFromTruncatedMessage函数检查发现tool调用参数超过最大token限制，将terminate置为false，随后该函数成功返回，因此将stopReason等于length（这个解释对吗？） | break Outer Loop | agent_end          |
 
 思考：工具执行要求终止时，是立即 `return`，还是通过修改循环状态在稍后结束？
 
-> 待填写。
+> 修改循环状态，先在Inner Loop结束前检查是否有`steer message`，然后在Outer Loop中检查是否有`followUpMessages`
 
 ### 5.9 事件顺序
 
@@ -340,13 +398,13 @@ assistant message
 场景 A：模型直接回答，无 tool call。
 
 ```text
-待填写
+turn_start -> message_start -> text_start -> text_end -> thinking_start -> thinking_end -> message_start -> message_end -> turn_end
 ```
 
 场景 B：模型调用一次 Tool，然后给出最终回答。
 
 ```text
-待填写
+ 先查看场景A是否正确，感觉我将agent层面和LLM层面的混起来了
 ```
 
 回答：
