@@ -44,4 +44,4 @@
 
 ## 当前目录
 
-本规则适用于 `Dpi_agent/` 及其子目录。当前目录包含已确认的基础 TypeScript 接口和 Mock 行为；尚无专用 `package.json`、测试或构建配置，因此不要假设存在未声明的命令。
+本规则适用于 `Dpi_agent/` 及其子目录。`Dpi_agent/` 是独立的 TypeScript 子项目：源码位于 `src/`，测试位于 `tests/`，项目级命令和配置位于当前目录的 `package.json`、`tsconfig.json` 和 `vitest.config.ts`。

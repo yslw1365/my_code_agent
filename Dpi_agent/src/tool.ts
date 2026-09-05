@@ -1,4 +1,4 @@
-import { AgentTool, ToolRegistry } from './types';
+import { AgentTool, ToolRegistry } from './types.js';
 
 export class DefaultToolRegistry implements ToolRegistry {
   private tools = new Map<string, AgentTool>();

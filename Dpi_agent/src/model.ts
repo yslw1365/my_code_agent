@@ -4,7 +4,7 @@ import {
   Context,
   ModelService,
   ToolCall,
-} from './types';
+} from './types.js';
 
 export class MockModel implements ModelService {
   modelName: string;

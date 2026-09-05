@@ -14,7 +14,10 @@
 ## 项目结构
 
 - `学习笔记/`：按核心模块整理的学习笔记
-- 后续将加入自己的 Agent 实现
+- `Dpi_agent/`：独立的 TypeScript Code Agent 子项目
+  - `src/`：源码
+  - `tests/`：测试
+  - `package.json`、`tsconfig.json`、`vitest.config.ts`：子项目配置
 
 ## 参考项目
 
