@@ -255,7 +255,7 @@ Context
 - 消息和接口：`Dpi_agent/src/types.ts`
 - Tool Registry：`Dpi_agent/src/tool.ts`
 - Mock Model：`Dpi_agent/src/model.ts`
-- Agent Loop：尚未实现
+- Agent Loop：已完成 M1 骨架，待补充 Tool Executor
 - Tool Executor：尚未实现
 
 ## 6. 设计决定与待确认假设
@@ -265,96 +265,57 @@ Context
 | 内容 | 状态 | 说明 |
 |---|---|---|
 | 第一版使用 TypeScript | 当前采用 | 与 Pi 学习路径和 Code Agent 方向保持一致 |
-| 第一版使用单层循环 | 待确认 | 可先降低复杂度，后续再考虑 steering/follow-up |
-| 第一版顺序执行 Tool | 待确认 | 先保证数据流清晰，暂不处理并发语义 |
-| 设置最大循环次数 | 当前设计 | 暂定 `MAX_STEPS = 8`，防止无限循环 |
+| 第一版使用单层循环 | 当前设计 | M1 只实现单层 Agent Loop |
+| 第一版顺序执行 Tool | 当前设计 | 多个 Tool Call 按顺序执行，前一个失败不影响后续 Tool |
+| 设置最大循环次数 | 当前设计 | `MAX_STEPS = 8`，防止无限循环 |
 | 工具错误转换为 Tool Result | 当前设计 | 让模型看到可处理的错误，而不是直接丢失循环上下文 |
 | 暂不实现复杂事件流 | 已确认延后 | 当前目标是先跑通核心数据流 |
 
-## 7. 当前需要独立完成：agent-loop 设计
-
-在让 Codex 实现 `agent-loop.ts` 之前，先独立回答下面的问题。这里故意不填写答案。
-
-1. `agentLoop` 接收哪些参数，返回什么结果？
-
-> 接收参数：Context, new AgentMessage; 返回一个事件流（**后面再加**），用于展示整个loop
-
-2. 初始 `Context` 如何创建？是否由调用方传入？
-
-> 直接由我当前固定写死，包括`system prompt`（**后面再加**）, `tool list`（**model中已经call tools了，Context和Tools应该区分开来**）这些，不需要调用方传入
-
-3. 每轮模型返回后，哪些消息要追加到 Context？顺序是什么？
-
-> 模型当前轮次的回复，工具调用请求（**这个已经在AssistantMessage**中了），工具调用结果，最终结束执行回复（这个实际上也是`AssistantMessage`）（就是这个先后顺序）
-
-4. 如何判断 `AssistantMessage` 中是否存在 `Tool Call`？
-
-> 查看回复的`AssistantMessage`有没有`call AgentTool`（**更好的表达**：查看`assistantMessage.toolCalls?.length`是否大于0，`Agent Loop`是纯代码，只能看数据结构，不能直接读懂自然语言的回复）
-
-5. Tool 不存在、参数无效、Tool 执行失败时，分别追加什么 Tool Result？
-
-> 全部生成
-
->   type: 'tool';
-
-    message: 具体错误原因（Tool 不存在、参数无效、Tool 执行失败）;
-
-    toolCallId: 之前的ToolCallId;
-
-    status: "error";
-
-6. 多个 Tool Call 是否顺序执行？如果前一个失败，后面的是否继续？
-
-> 当前我们是顺序执行，后面要继续当前我们是顺序执行，后面要继续
-
-7. 没有 `Tool Call `时，Agent 返回什么？Context 是否需要一并返回？
-
-> 返回结束，`context`不需要一并返回（表述模糊，直接返回`AssistantMessage`，当前`AssistantMessage`就是我们的AgentRunLoop的Result）
-
-8. 超过 `MAX_STEPS` 时，Agent 返回什么错误？已经产生的` Context `如何处理？
-
-> 返回超时错误，已产生的`Context`可以选择压缩，或者暂存，给下一轮使用（超前了，当前版本不用这么多）
-
-> 只用返回`MAX_STEPS`错误
-
-9.  `ModelService.call()` 抛出异常时，循环如何结束？
-
-> 先再次尝试调用模型，如果还是异常则break，并且报出相关错误（自动重试当前不做）
-
-> `Agent Runtime `失败 → 返回/抛出模型调用错误
-
-10.  `Tool Executor` 的职责放在 `agentLoop` 内，还是单独抽出函数？为什么？
-
-> 单独抽出函数，目的是职责分离，而且后续Tool Executor会进一步升级，有其他的功能（单独搞一个Tool Executor函数就行，后续升级再考虑定义成接口）
-
-### 我的设计草稿
+## 7. M1 Agent Loop 完整设计
 
 ```text
-函数签名：
-输入：- UserMessage, - ModelService, - ToolRegistry, - maxSteps（可选）
-输出：最终的`AssistantMessage`/AgentRunLoop的Result
-------
-初始 Context：
-Context = [UserMessage]
------
-每轮流程：
-`AssistantMessage` → ToolReuslt → 因为ToolResult要给模型看，所以下一轮的`AssistantMessage`→ 下一轮工具调用/直接结束
------
-继续条件：
-存在剩余工具调用
------
-结束条件：
-没有新的工具调用
------
-Tool 错误处理：
-返回 type 为 tool，message 为具体报错信息，status 为 error 的 message 
------
-最大步数处理：
-返回超出最大步数错误
------
-我选择这些方案的原因：
-M1 为最小实现方案，当前设计足够 agent 跑起来
+输入：
+UserMessage
+ModelService
+ToolRegistry
+maxSteps
+
+输出：
+Promise<AssistantMessage>
+
+Context：
+[UserMessage]
+
+每个 Step：
+1. model.call(context, registry.list())
+2. AssistantMessage 加入 Context
+3. 无 toolCalls → return AssistantMessage
+4. 有 toolCalls：
+   - 顺序遍历全部 ToolCall
+   - 查找 Tool
+   - validateArgs
+   - toolFunc
+   - success/error → ToolResultMessage
+   - ToolResultMessage 加入 Context
+5. 全部 ToolCall 处理完 → 下一 Step
+
+Tool 错误：
+转为 status:error 的 ToolResultMessage，不终止 Agent
+
+Model 错误：
+抛出错误，终止 Runtime
+
+MAX_STEPS：
+抛出错误，终止 Runtime
 ```
+
+设计目标：
+
+- M1 只实现最小、单层的 Agent Loop。
+- `Context` 保存模型与工具之间的消息流；`tools` 通过 `ModelService.call()` 单独传入，不混入 `Context`。
+- Agent Loop 只根据结构化的 `AssistantMessage.toolCalls` 控制流程，不解析自然语言。
+- Tool 错误写回 Context，让模型有机会基于错误结果继续处理；模型调用错误和最大步数错误终止 Runtime。
+- 当前不实现事件流、重试、Context 压缩、Context 暂存、持久化或其他后续能力。
 
 ### 设计验收
 
@@ -363,7 +324,6 @@ M1 为最小实现方案，当前设计足够 agent 跑起来
 - [ ] 能说明每个错误分支如何影响 Context
 - [ ] 能说明 `MAX_STEPS` 的作用
 - [ ] 能用当前 `types.ts` 的接口表达自己的设计
-
 
 ## 8. 后续演进，仅作路线记录
 
