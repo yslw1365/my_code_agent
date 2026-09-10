@@ -255,8 +255,8 @@ Context
 - 消息和接口：`Dpi_agent/src/types.ts`
 - Tool Registry：`Dpi_agent/src/tool.ts`
 - Mock Model：`Dpi_agent/src/model.ts`
-- Agent Loop：已完成 M1 骨架，待补充 Tool Executor
-- Tool Executor：尚未实现
+- Agent Loop：M1 已实现，待补充剩余验证测试
+- Tool Executor：M1 已实现
 
 ## 6. 设计决定与待确认假设
 
@@ -325,7 +325,649 @@ MAX_STEPS：
 - [ ] 能说明 `MAX_STEPS` 的作用
 - [ ] 能用当前 `types.ts` 的接口表达自己的设计
 
-## 8. 后续演进，仅作路线记录
+## 8. M2：Minimal Code Agent 设计（待填写）
+
+> 本节用于独立设计 M2。下面的目标、能力和问题来自阶段建议，暂不视为项目负责人的最终设计决定。
+
+### 8.1 M2 的目标
+
+M1 已经解决：
+
+```text
+User
+→ Model
+→ ToolCall
+→ Tool Execution
+→ ToolResult
+→ Model
+→ Final Answer
+```
+
+M2 的候选目标是让现有 Runtime 第一次具备最小的 Coding 能力：
+
+```text
+用户提出代码修改任务
+        ↓
+Agent 理解任务
+        ↓
+读取代码
+        ↓
+修改代码
+        ↓
+运行测试
+        ↓
+根据测试结果决定是否继续
+        ↓
+测试通过
+        ↓
+返回最终结果
+```
+
+验收任务示例：
+
+```text
+修复 demo-project 中 add() 的实现，并确保测试通过。
+```
+
+我的 M2 目标：
+
+```text
+
+```
+
+### 8.2 M2 需要增加的能力
+
+以下内容是待设计的候选能力，不代表已经决定采用。
+
+#### 真实 ModelService
+
+M1 使用 `MockModel`。M2 是否接入真实模型，以及如何实现，需要回答：
+
+```text
+真实 ModelService 应该放在哪个模块？
+
+ModelService 与具体模型 Provider 的边界是什么？
+
+API Key / modelName 应该由谁持有？
+
+Provider 返回的数据在哪里转换成 AssistantMessage？
+
+模型 API 错误如何处理？
+```
+
+我的设计：
+
+```text
+
+```
+
+#### `read_file` Tool
+
+候选流程：
+
+```text
+输入文件路径
+→ 读取文件
+→ 返回文本内容
+```
+
+需要回答：
+
+```text
+参数需要哪些字段？
+
+如何验证参数？
+
+文件不存在怎么办？
+
+是否允许绝对路径？
+
+Agent 能读取整个电脑，还是只能读取 Workspace？
+
+返回整个文件，还是支持范围读取？
+```
+
+我的设计：
+
+```text
+
+```
+
+#### `edit_file` Tool
+
+候选流程：
+
+```text
+Agent 指定代码修改
+→ Tool 修改 Workspace 中的文件
+```
+
+需要回答：
+
+```text
+M2 使用哪种修改方式？
+
+A. 整文件覆盖
+B. oldText → newText
+C. patch/diff
+D. 其他方案
+
+为什么选择这个方案？
+
+如果目标文本不存在怎么办？
+
+如果匹配多个位置怎么办？
+
+是否允许创建新文件？
+
+如何避免修改 Workspace 之外的文件？
+```
+
+我的设计：
+
+```text
+
+```
+
+#### `bash` Tool
+
+候选流程：
+
+```text
+command
+→ 执行 shell command
+→ stdout / stderr / exit code
+→ ToolResult
+```
+
+需要回答：
+
+```text
+参数是什么？
+
+ToolResult 应该返回什么？
+
+stdout / stderr 怎么组织？
+
+exit code != 0：
+属于 Tool 执行失败，还是属于命令成功执行但命令结果失败？
+
+命令是否允许任意执行？
+
+工作目录如何确定？
+
+M2 是否需要 timeout？
+```
+
+我的设计：
+
+```text
+
+```
+
+### 8.3 Workspace 设计
+
+M2 第一次操作真实文件，因此需要明确 Workspace 边界：
+
+```text
+什么是 Workspace？
+
+read_file 如何知道当前 Workspace？
+
+edit_file 如何知道当前 Workspace？
+
+bash 默认在哪里执行？
+
+../ 是否允许逃出 Workspace？
+
+Workspace 信息应该作为 Tool 参数传入、在 Tool 创建时绑定，还是由 Agent Runtime 持有？
+```
+
+我的设计：
+
+```text
+
+```
+
+### 8.4 ToolResult 语义
+
+M1 使用：
+
+```ts
+ToolResultMessage {
+  type
+  message
+  toolCallId
+  status
+}
+```
+
+M2 需要重新验证它是否足够表达不同 Tool 的结果。
+
+需要分别考虑：
+
+```text
+read_file：读取成功、读取失败
+
+edit_file：修改成功、目标不存在、文件不存在
+
+bash：命令执行成功、命令运行但测试失败、Shell 执行异常
+```
+
+我的定义：
+
+```text
+
+```
+
+### 8.5 Coding Agent 的 System Prompt
+
+需要回答：
+
+```text
+System Prompt 是否属于 Context？
+
+是否需要增加 SystemMessage？
+
+还是由具体 ModelService 单独接收 System Prompt？
+
+System Prompt 最少应该告诉模型哪些规则？
+
+Tool 描述和 System Prompt 的职责如何区分？
+```
+
+M2 的 Prompt 目标暂时只围绕：
+
+```text
+模型知道当前任务是什么；
+模型知道可以使用工具；
+模型应该先观察代码再修改；
+模型修改后应该验证；
+模型不应该假装执行过工具。
+```
+
+我的设计：
+
+```text
+
+```
+
+### 8.6 M2 数据流
+
+请用自己的设计补全：
+
+```text
+User
+ ↓
+
+???
+
+ ↓
+
+Real Model
+
+ ↓
+
+???
+
+ ↓
+
+Tool
+
+ ↓
+
+???
+
+ ↓
+
+Model
+
+ ↓
+
+Final Answer
+```
+
+需要标出：
+
+```text
+Context
+ToolRegistry
+ModelService
+Workspace
+read_file
+edit_file
+bash
+```
+
+我的设计：
+
+```text
+
+```
+
+### 8.7 一个完整任务如何运行
+
+目标 Fixture：
+
+```ts
+export function add(a: number, b: number) {
+  return a - b;
+}
+```
+
+已有测试要求：
+
+```text
+add(1, 2) should equal 3
+```
+
+用户输入：
+
+```text
+修复 add()，并确保测试通过。
+```
+
+请预测 Agent 如何执行：
+
+#### Step 1
+
+模型看到：
+
+```text
+
+```
+
+模型决定：
+
+```text
+
+```
+
+#### Tool Result
+
+```text
+
+```
+
+#### Step 2
+
+模型看到：
+
+```text
+
+```
+
+模型决定：
+
+```text
+
+```
+
+#### 最终结果
+
+```text
+
+```
+
+### 8.8 M2 测试设计
+
+#### Tool Unit Tests
+
+```text
+read_file：
+-
+
+edit_file：
+-
+
+bash：
+-
+```
+
+#### Agent Integration Test
+
+```text
+输入一个有明确 Bug 的 Fixture Project
+
+Agent
+→
+
+最终检查：
+→
+```
+
+需要回答：
+
+```text
+哪些测试继续使用 MockModel？
+
+哪些测试必须使用真实 Model？
+
+使用真实 Model 的测试是否应该成为普通 CI 测试？
+```
+
+我的设计：
+
+```text
+
+```
+
+### 8.9 Fixture Project
+
+M2 不应一开始修改自己的 Agent 仓库。候选结构：
+
+```text
+fixtures/
+└── broken-project/
+```
+
+需要设计：
+
+```text
+Fixture 使用什么语言？
+
+测试命令是什么？
+
+Bug 是什么？
+
+Agent 成功的客观标准是什么？
+
+每次测试后如何恢复 Fixture？
+```
+
+我的设计：
+
+```text
+
+```
+
+### 8.10 M2 明确不做的能力
+
+以下是待确认的候选延后项，不是已经确认的决定：
+
+| 能力 | M2 是否做 | 原因 |
+|---|---|---|
+| Plugin Architecture |  |  |
+| MCP |  |  |
+| Skill |  |  |
+| 多 Agent |  |  |
+| steering |  |  |
+| follow-up |  |  |
+| Context Compression |  |  |
+| Persistent Session |  |  |
+| 自动模型切换 |  |  |
+| RAG |  |  |
+| Vector DB |  |  |
+| Web UI |  |  |
+| Docker Sandbox |  |  |
+| Event Stream |  |  |
+| 自动 Retry |  |  |
+| Parallel Tool Call |  |  |
+
+我的补充：
+
+```text
+
+```
+
+### 8.11 是否需要修改 M1 Runtime
+
+这是 M2 的关键设计问题：
+
+```text
+为了支持 Code Agent，现有 agentLoop 是否必须修改？
+```
+
+如果需要：
+
+```text
+必须修改什么？
+
+为什么？
+```
+
+如果不需要：
+
+```text
+为什么 M1 Runtime 已经可以支持 Coding？
+```
+
+我的设计：
+
+```text
+
+```
+
+### 8.12 M2 最小架构
+
+根据自己的设计填写，不要为了未来扩展提前增加目录：
+
+```text
+src/
+
+agent_loop.ts
+    └── ?
+
+model.ts
+    └── ?
+
+tool.ts
+    └── ?
+
+types.ts
+    └── ?
+
+???
+
+fixtures/
+    └── broken-project
+
+tests/
+    └── ?
+```
+
+我的设计：
+
+```text
+
+```
+
+### 8.13 M2 Done Definition
+
+只有满足以下条件，M2 才算完成：
+
+#### Runtime
+
+- M1 Agent Loop 仍然正常工作。
+- ToolCall / ToolResult 闭环没有被破坏。
+
+#### Model
+
+- 已接入至少一个真实模型。
+- 模型能够主动选择工具。
+- ToolCall 能正确转换为现有内部类型。
+
+#### Coding Tools
+
+- Agent 能读取 Workspace 文件。
+- Agent 能修改 Workspace 文件。
+- Agent 能执行测试命令。
+
+#### End-to-End
+
+对于一个之前没有见过的简单 Bug：
+
+```text
+User Prompt
+    ↓
+Agent
+    ↓
+读取代码
+    ↓
+修改代码
+    ↓
+运行测试
+    ↓
+最终测试通过
+    ↓
+Agent 返回完成结果
+```
+
+能够真实跑通。
+
+#### Safety
+
+- Agent 不能修改测试 Workspace 之外的文件。
+
+#### Tests
+
+- Coding Tools 有必要的单元测试。
+- M1 原有测试继续通过。
+
+我的 M2 Done Definition：
+
+```text
+
+```
+
+### 8.14 M2 完成后我必须能解释的问题
+
+1. 为什么 Agent Loop 不应该直接依赖具体模型 SDK？
+2. Tool Definition 和 ToolCall 有什么区别？
+3. 为什么 Tool Schema 是给模型看的，同时 Runtime 仍然需要参数校验？
+4. 为什么 Code Agent 需要 Workspace Boundary？
+5. 为什么测试命令返回失败不一定意味着 bash Tool 自身执行失败？
+6. 为什么 ToolResult 必须重新进入 Context？
+7. 为什么修改代码后应该通过 Tool 验证，而不能相信模型说“已经修好了”？
+8. MockModel Test 和 Real Model Integration Test 各自解决什么问题？
+9. M1 Agent Runtime 为什么能够扩展成 Code Agent？
+10. M2 中哪些部分属于确定性软件，哪些部分真正由 LLM 决策？
+
+我的回答：
+
+```text
+
+```
+
+### 8.15 M2 核心设计原则
+
+```text
+M2 的核心目标：
+
+M2 相比 M1 增加了什么：
+
+M2 刻意没有增加什么：
+
+LLM 负责：
+
+确定性代码负责：
+
+我认为当前架构最大的限制：
+
+下一阶段可能需要解决的问题：
+```
+
+## 9. 后续演进，仅作路线记录
 
 这些不是当前任务：
 

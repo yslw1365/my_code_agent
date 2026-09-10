@@ -190,6 +190,8 @@
   },
   "active": "8bc7bbf7369c09e5",
   "lastOpenFiles": [
+    "Dpi_agent/tests/agent_loop.test.ts",
+    "Dpi_agent/src/agent_loop.ts",
     "学习笔记/03-Agent-Loop.md",
     "学习笔记/04-Dpi_agent设计与决策.md",
     "学习笔记/04-个人Agent设计与决策.md",
@@ -202,7 +204,6 @@
     "Dpi_agent/dist/Dpi_agent/src/tool.js",
     "Dpi_agent/dist/Dpi_agent/src/model.js",
     "Dpi_agent/dist/Dpi_agent/src/main.js",
-    "Dpi_agent/dist/Dpi_agent/types.js",
     "Dpi_agent/node_modules/typescript/vendor/vscode-jsonrpc/README.md",
     "Dpi_agent/node_modules/@vitest/spy/README.md",
     "Dpi_agent/node_modules/@vitest/mocker/README.md",
@@ -225,7 +226,6 @@
     "Dpi_agent/node_modules/vite/README.md",
     "Dpi_agent/node_modules/vite/LICENSE.md",
     "Dpi_agent/node_modules/typescript/README.md",
-    "Dpi_agent/node_modules/tsx/README.md",
     "未命名.canvas"
   ]
 }
