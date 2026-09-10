@@ -36,36 +36,47 @@ export async function runAgent(
 }
 
 async function executeToolCall(
-    toolcall: ToolCall,
-    toolregistry: ToolRegistry
+    toolCall: ToolCall,
+    toolRegistry: ToolRegistry
 ): Promise<ToolResultMessage> {
-    // 找到对应 Tool
-    const tool = toolregistry.get(toolcall.toolName)
+    const tool = toolRegistry.get(toolCall.toolName);
+
     if (!tool) {
         return {
             type: 'tool',
-            message: `Tool ${toolcall.toolName} not found`,
-            toolCallId: toolcall.toolCallId,
+            message: `Tool ${toolCall.toolName} not found`,
+            toolCallId: toolCall.toolCallId,
             status: 'error',
-        }
+        };
     }
-    // 校验参数
-    tool.validateArgs(toolcall.toolArgs)
-    // 校验失败，返回失败，当前缺少判断逻辑
-    return {
-        type: 'tool',
-        message: `Tool ${toolcall.toolArgs} is invaild`,
-        toolCallId: toolcall.toolCallId,
-        status: 'error',
+
+    const isValidArgs = tool.validateArgs(toolCall.toolArgs);
+    if (!isValidArgs) {
+        return {
+            type: 'tool',
+            message: `Tool ${toolCall.toolName} received invalid arguments`,
+            toolCallId: toolCall.toolCallId,
+            status: 'error',
+        };
     }
-    // 执行 Tool
-    const result = await tool.toolFunc(toolcall.toolArgs);
-    // 结果包装为ToolResultMessage
-    return {
-        type: 'tool',
-        message: result,
-        toolCallId: toolcall.toolCallId,
-        status: "success",
+
+    try {
+        const result = await tool.toolFunc(toolCall.toolArgs);
+
+        return {
+            type: 'tool',
+            message: result,
+            toolCallId: toolCall.toolCallId,
+            status: 'success',
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+
+        return {
+            type: 'tool',
+            message: `Tool ${toolCall.toolName} failed: ${message}`,
+            toolCallId: toolCall.toolCallId,
+            status: 'error',
+        };
     }
-    // 工具异常，给一个错误的 result 信息
 }
