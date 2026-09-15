@@ -387,153 +387,112 @@ Agent 应能够自行完成：
 
 ### 8.2 M2 必须实现的能力
 
-#### 8.2.1 真实 ModelService
+M1 使用 `MockModel`，M2 至少需要补齐以下四类能力：
 
-M1 使用：
+| 能力 | 作用 |
+| --- | --- |
+| 真实模型 Provider | 让 Agent Loop 可以调用真实模型 |
+| `read_file` | 读取 Workspace 中的文件 |
+| `edit_file` | 修改 Workspace 中已有的文件 |
+| `bash` | 在 Workspace 根目录执行受限的 Shell 命令 |
 
-```text
-MockModel
-```
+这些能力都必须接入现有的 `ModelService`、`AgentTool` 和 `ToolResultMessage` 设计，不能让 `Agent Loop` 直接依赖具体模型 SDK 或文件、Shell 的底层实现。
 
-M2 需要至少实现一个真实模型 Provider。
+---
 
-要求：
+#### 8.2.1 真实模型 Provider
+
+##### 必须实现
 
 - 实现现有 `ModelService`
-- 能将 `Context` 转换成模型 API 所需消息格式
-- 能将 `AgentTool[]` 转换为模型可识别的 Tool Definition
-- 能将模型返回的 Tool Call 转换为现有 `ToolCall`
-- 不允许 Agent Loop 直接依赖具体模型 SDK
+- 将 `Context` 转换成模型 API 所需的消息格式
+- 将 `AgentTool[]` 转换为模型可识别的 Tool Definition
+- 将模型返回的 Tool Call 转换为现有 `ToolCall`
+- 不让 `Agent Loop` 直接依赖具体模型 SDK
 
-需要自行设计：
+##### 设计问题
 
-```text
-真实 ModelService 应该放在哪个模块？
+- 真实 `ModelService` 应该放在哪个模块？
+- `ModelService` 与具体模型 Provider 的边界是什么？
+- `API Key` 和 `modelName` 应该由谁持有？
+- Provider 返回的数据在哪里转换成 `AssistantMessage`？
+- 模型 API 错误如何处理？
 
-ModelService 与具体模型 Provider 的边界是什么？
+##### 当前设计
 
-API Key / modelName 应该由谁持有？
-
-Provider 返回的数据在哪里转换成 AssistantMessage？
-
-模型 API 错误如何处理？
-```
-
-我的设计：
-
-```text
-应该放在 Model.ts 这个文件中
-
-ModelService只负责将上下文、工具列表等传入模型，并调用模型，最后将模型回复转为 Assistant Messages；具体的模型 Provider 应该负责存储 API Key、modelName以及模型自带的一些能力，比如说识别图片
-
-这两个都应该由模型 Provider 来持有；可以定义多个模型 Provider，根据不同的 Model Name 来区分。
-
-在 ModelService 里面
-
-模型 API 错误应该由 ModelService 处理，然后包装成一个 Message，内容为具体 API 错误，没有工具调用的 AssistantMessage。
-
-```
+- 放在 `model.ts` 文件中。
+- `ModelService` 负责接收上下文和工具列表、调用模型，并将模型回复转换为 `AssistantMessage`。
+- 具体模型 Provider 负责保存 `API Key`、`modelName` 以及模型自身的能力，例如图片识别能力。
+- 可以定义多个模型 Provider，通过不同的 `modelName` 区分。
+- 与 M1 保持一致：模型 API 发生错误时，直接抛出错误并退出 Runtime。
 
 ---
 
-#### 8.2.2 read_file Tool
+#### 8.2.2 `read_file` Tool
 
-能力：
+##### 能力
 
-```text
-输入文件路径
-→ 读取文件
-→ 返回文本内容
-```
+`输入文件路径 → 读取文件 → 返回文本内容`
 
-需要自行设计：
+##### 设计问题
 
-```text
-参数需要哪些字段？
+- 参数需要哪些字段？
+- 如何验证参数？
+- 文件不存在怎么办？
+- 是否允许绝对路径？
+- Agent 能读取整个电脑，还是只能读取 Workspace？
+- 返回整个文件还是支持范围读取？
 
-如何验证参数？
+##### 当前设计
 
-文件不存在怎么办？
-
-是否允许绝对路径？
-
-Agent 能读取整个电脑，还是只能读取 workspace？
-
-返回整个文件还是支持范围读取？
-```
-
-我的设计：
-
-```text
-文件名、文件路径
-
-使用系统原生的 Grep 工具查看路径，使用 find 工具查找文件是否存在
-
-返回文件不存在的错误
-
-允许
-
-只能读取 Workspace
-
-支持范围读取，防止整个文件太大，导致最终上下文太大，超出了模型的 Token 限制
-
-```
+- 参数使用 `File path`。
+- 使用 `validateArgs` 验证参数，检查 `path` 格式以及 Workspace 边界。
+- 文件不存在时返回对应错误。
+- 允许绝对路径，但绝对路径必须位于 Workspace 内。
+- 只能读取 Workspace 中的文件。
+- 支持按行号读取文件范围，包含结束行，并且行号从第一行开始，以避免文件过大导致上下文超过模型 Token 限制。
 
 ---
 
-#### 8.2.3 edit_file Tool
+#### 8.2.3 `edit_file` Tool
 
-能力：
+##### 能力
 
-```text
-Agent 指定代码修改
-→ Tool 修改 Workspace 中的文件
-```
+`Agent 指定代码修改 → Tool 修改 Workspace 中已有的文件`
 
-需要自行设计：
+##### 设计问题
 
-```text
-M2 使用哪种修改方式？
+- M2 使用哪种修改方式？
+- 为什么选择这种修改方式？
+- 如果目标文本不存在怎么办？
+- 如果目标文本匹配多个位置怎么办？
+- 是否允许创建新文件？
+- 如何避免修改 Workspace 之外的文件？
 
-采用 B 和 C 的混合方案，先用 oldText 到 newText。用这样的方式去完成代码的修改，然后再用 C 的 diff 方法来查看验证修改是否完成成功
+##### 当前设计
 
-方案示例：
+- 使用 `oldText → newText` 的方式修改文件。
+- 选择这一方式，是因为定位方式直接，实现简单，便于判断目标文本是否存在，也更直观。
+- 修改完成后使用 `patch/diff` 观察或验证文本修改结果。
+- `diff` 只能说明文件内容发生了变化，不能证明修改满足用户意图、语义正确或测试要求。
+- 目标文本不存在时，工具抛出对应错误。
+- 同一个文件中目标文本匹配多个位置时，直接抛出异常并提示存在多个位置，避免误修改用户不希望修改的代码。
+- 不允许创建新文件。
+- 修改前检查目标文件是否位于 Workspace 内；如果超出 Workspace，则抛出异常并中断工具执行。
 
-A. 整文件覆盖
-B. oldText → newText
-C. patch/diff
-D. 其他方案
+##### 设计过程记录
 
-为什么选择这个方案？
-这样设计主要为了避免 patch 的失败的可能，因为可能有的代码格式文件并不支持 patch。同时使用 C 的 diff 方法来查看验证，确保了我们修改一定成功，增强了可靠性
-
-如果目标文本不存在怎么办？
-封装一个目标文本不存在的 tool result message
-
-如果匹配多个位置怎么办？
-封装一个当前存在多个位置的 tool result message。直接返回，让用户判断指令到底要修改哪个文件。
-
-是否允许创建新文件？
-不允许
-
-如何避免修改 workspace 之外的文件？
-在工具执行过程中，查看工具修改文件的路径；如果超出了 Workspace，就直接 break 跳出。
-```
+最初曾考虑：匹配多个位置时全部串行修改，或者返回结果让用户判断。复盘后发现，这两种方式都可能导致修改范围不明确，因此最终改为：匹配多个位置时直接报错，不执行修改。
 
 ---
 
-#### 8.2.4 bash Tool
+#### 8.2.4 `bash` Tool
 
-能力：
+##### 能力
 
-```text
-command
-→ 执行 shell command
-→ stdout / stderr / exit code
-→ ToolResult
-```
+`command → 执行 Shell command → stdout / stderr / exit code → ToolResult`
 
-主要用于：
+##### 主要用途
 
 ```text
 npm test
@@ -544,43 +503,28 @@ find
 ...
 ```
 
-需要自行设计：
+##### 设计问题
 
-```text
-参数是什么？
+- 参数是什么？
+- `ToolResult` 应该返回什么？
+- `stdout` / `stderr` 如何组织？
+- `exit code != 0` 属于 Tool 执行失败，还是一次成功执行但命令结果失败？
+- 命令是否允许任意执行？
+- 工作目录如何确定？
+- M2 是否需要 timeout？
 
-ToolResult 应该返回什么？
+##### 当前设计
 
-stdout / stderr 怎么组织？
-
-exit code != 0：
-属于 Tool 执行失败，
-还是属于一次成功执行但命令结果失败？
-
-命令是否允许任意执行？
-
-工作目录如何确定？
-
-M2 是否需要 timeout？
-```
-
-我的设计：
-
-```text
-参数应该是具体的 Bash 命令
-
-应该返回命令的执行结果；如果没有执行结果，就返回命令是成功还是失败。
-
-我不知道 Stdout 和 Stderr 是什么东西
-
-属于一次成功执行，但命令结果失败
-
-不允许，应该严格限制 Bash 命令的范围
-
-工作目录就是当前的 Workspace
-
-需要设计 Timeout
-```
+- 只允许调用规定范围内的 Shell 工具名称和参数，确保 Bash Tool 接收到的是可以直接执行的正确 Shell 命令。
+- 返回命令的执行结果；如果没有输出，则检查 `exitCode` 判断命令是否正常执行。
+- `stdout`：命令的正常输出。
+- `stderr`：命令的诊断、警告或错误输出。
+- `exitCode`、`stdout` 和 `stderr` 使用固定标签分类展示；即使某一部分为空，也保留对应标签。
+- Bash Tool 将 `stdout`、`stderr` 和 `exitCode` 以固定标签格式组织到 `ToolResultMessage.message` 中：`exitCode` 用于判断命令结果，`stdout` 和 `stderr` 用于向模型提供执行细节。
+- `exit code != 0` 属于一次成功执行，但命令结果失败。
+- 不允许任意执行命令，必须严格限制 Bash 命令范围。
+- 工作目录是当前 Workspace 根目录，并且始终使用同一个 Workspace 根目录。
+- M2 需要设计 timeout。
 
 ---
 
